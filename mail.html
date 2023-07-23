@@ -1,0 +1,42 @@
+<html>
+    <head>
+        <style>
+            body {
+                font-family: Arial, Helvetica, sans-serif
+            }
+            td, th {
+                height: 30px;
+            }
+        </style>
+    </head>
+<body>
+    <h2>Account balance</h2>
+    <p>Dear client, here you have your total account balance.</p>
+    <p>Total account balance: <b>{{.Balance}} USD</b></p>
+    <p>Detail:</p>
+    <table rules="all" style="border:1px solid #333; text-align: center; width: 800px;">
+        <thead>
+            <th>Month</th>
+            <th>Transactions</th>
+            <th>Average debit</th>
+            <th>Average credit</th>
+        </thead>
+        <tbody>
+            {{range .Rows}}
+            <tr>
+                <td>{{.Month}}</td>
+                <td>{{.Transactions}}</td>
+                <td>{{.DebitAmount}} USD</td>
+                <td>{{.CreditAmount}} USD</td>
+            </tr>
+        </tbody>
+        {{end}}
+    </table>
+    <br>
+    <p>Cheers</p>
+    <p>Stori Team.</p>
+    <br>
+    <img src="https://www.storicard.com/_next/static/media/complete-logo.0f6b7ce5.svg" alt="Stori">
+</body>
+
+</html>
