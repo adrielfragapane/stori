@@ -2,65 +2,74 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"html/template"
 	"io"
-	"io/ioutil"
 	"net/smtp"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gocarina/gocsv"
 )
 
-type Transaction struct {
-	Id    int     `csv:"Id" gorm:"column:id"`
-	Date  string  `csv:"Date" gorm:"column:date"`
-	Value float64 `csv:"Transaction" gorm:"column:value"`
-}
-
-func (Transaction) TableName() string {
-	return "transactions"
-}
-
-type TemplateData struct {
-	Rows    []MonthData
-	Balance float64
-}
-
-type MonthData struct {
-	Month        string
-	Transactions int
-	DebitAmount  float64
-	CreditAmount float64
-}
-
 func main() {
+	lambda.Start(handler)
+}
 
-	path, _ := filepath.Abs("txns.csv")
-	file, err := os.Open(path)
+func handler(ctx context.Context, event events.S3Event) error {
 
-	if err != nil {
-		fmt.Printf("Error reading file: %s", err.Error())
+	sess := session.Must(session.NewSession())
+
+	for _, record := range event.Records {
+		event := record.S3
+
+		bucketName := event.Bucket.Name
+		objectKey := event.Object.Key
+
+		file, err := readFile(sess, bucketName, objectKey)
+		if err != nil {
+			return fmt.Errorf("Error reading file from S3: %w", err)
+		}
+
+		templateData, err := processCSV(file)
+
+		template, err := readFile(sess, bucketName, "mail.html")
+		if err != nil {
+			return fmt.Errorf("Error reading template from S3: %w", err)
+		}
+
+		err = sendEmail(template, templateData)
+
+		if err != nil {
+			return fmt.Errorf("Error sending email: %w", err)
+		}
 	}
 
-	defer file.Close()
+	return nil
+}
 
-	templateData, err := processCSV(file)
+func readFile(sess *session.Session, bucketName string, objectKey string) (io.ReadCloser, error) {
+	svc := s3.New(sess)
 
-	if err != nil {
-		fmt.Printf("Error processing file: %s", err.Error())
+	params := &s3.GetObjectInput{
+		Bucket: &bucketName,
+		Key:    &objectKey,
 	}
 
-	err = sendEmail(templateData)
-
+	resp, err := svc.GetObject(params)
 	if err != nil {
-		fmt.Printf("Error processing file: %s", err.Error())
+		return nil, err
 	}
+
+	return resp.Body, nil
 }
 
 func processCSV(csvFile io.ReadCloser) (TemplateData, error) {
@@ -81,7 +90,7 @@ func processCSV(csvFile io.ReadCloser) (TemplateData, error) {
 
 		month, _ := strconv.Atoi(strings.Split(transaction.Date, "/")[0])
 
-		totalBalance = totalBalance + transaction.Value
+		totalBalance += transaction.Value
 
 		transactionsByMonth[month] += 1
 
@@ -115,7 +124,7 @@ func processCSV(csvFile io.ReadCloser) (TemplateData, error) {
 	return TemplateData{Rows: monthData, Balance: totalBalance}, nil
 }
 
-func sendEmail(data TemplateData) error {
+func sendEmail(emailTemplate io.ReadCloser, data TemplateData) error {
 
 	from := os.Getenv("EMAIL_USER")
 	pass := os.Getenv("EMAIL_PASS")
@@ -123,16 +132,13 @@ func sendEmail(data TemplateData) error {
 	subject := "Account balance"
 
 	renderedBody := new(bytes.Buffer)
+	templateBody := new(bytes.Buffer)
 
-	emailTemplate, err := ioutil.ReadFile("mail.html")
-
-	if err != nil {
-		return fmt.Errorf("Error reading template: %w", err)
-	}
+	templateBody.ReadFrom(emailTemplate)
 
 	// Render the table template
-	t := template.Must(template.New("template").Parse(string(emailTemplate)))
-	err = t.Execute(renderedBody, data)
+	t := template.Must(template.New("template").Parse(string(templateBody.String())))
+	err := t.Execute(renderedBody, data)
 
 	if err != nil {
 		return fmt.Errorf("Error rendering email body: %w", err)
@@ -154,4 +160,36 @@ func sendEmail(data TemplateData) error {
 
 	return nil
 
+}
+
+type TemplateData struct {
+	Rows    []MonthData
+	Balance float64
+}
+
+type Transaction struct {
+	Id    int     `csv:"Id" gorm:"column:id"`
+	Date  string  `csv:"Date" gorm:"column:date"`
+	Value float64 `csv:"Transaction" gorm:"column:value"`
+}
+
+func (Transaction) TableName() string {
+	return "transactions"
+}
+
+type Account struct {
+	Id      int     `gorm:"column:id"`
+	Name    string  `gorm:"column:name"`
+	Balance float64 `gorm:"column:balance"`
+}
+
+func (Account) TableName() string {
+	return "account"
+}
+
+type MonthData struct {
+	Month        string
+	Transactions int
+	DebitAmount  float64
+	CreditAmount float64
 }
