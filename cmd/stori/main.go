@@ -53,6 +53,7 @@ func handler(ctx context.Context, event events.S3Event) error {
 
 		if err != nil {
 			return fmt.Errorf("Error sending email: %w", err)
+			// Helloo
 		}
 	}
 
